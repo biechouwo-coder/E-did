@@ -5,7 +5,10 @@
       "Bash(py:*)",
       "Bash(git init:*)",
       "Bash(git remote add origin:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(dir:*)"
     ]
   }
 }

@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-PSM倾向得分匹配分析脚本
+PSM倾向得分匹配分析脚本（修正版）
+
+核心逻辑修正：
+- 使用treat变量（静态分组变量）进行PSM匹配，匹配"身份"而非"状态"
+- treat=1: 在低碳试点名单中的城市（无论何时开始实施）
+- treat=0: 从未在试点名单中的城市
+
 控制变量：人均GDP、人口密度、产业结构升级、lnFDI
 卡尺：0.05
-基期：使用2010年作为基期（第一批试点实施前）
+基期：2009年（政策实施前）
 """
 
 import pandas as pd
@@ -25,7 +31,7 @@ plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 print("="*70)
-print("PSM倾向得分匹配分析")
+print("PSM倾向得分匹配分析（修正版）")
 print("="*70)
 
 # 设置输出路径
@@ -33,21 +39,21 @@ output_dir = 'PSM_Analysis'
 
 # 步骤1: 读取数据
 print("\n步骤1: 读取数据...")
-df = pd.read_excel('总数据集_2007-2023_完整版_DID.xlsx')
+df = pd.read_excel('总数据集_2007-2023_完整版_DID_with_treat.xlsx')
 print(f"✓ 读取数据: {df.shape[0]} 行 × {df.shape[1]} 列")
 
-# 步骤2: 准备基期数据（使用2010年作为基期）
+# 步骤2: 准备基期数据（使用2009年作为基期）
 print("\n步骤2: 准备基期数据...")
-base_year = 2010
+base_year = 2009
 df_base = df[df['year'] == base_year].copy()
-print(f"✓ 基期年份: {base_year}")
+print(f"✓ 基期年份: {base_year} (政策实施前)")
 print(f"✓ 基期观测数: {len(df_base)}")
 
-# 检查处理组和对照组
-treatment_count = (df_base['DID'] == 1).sum()
-control_count = (df_base['DID'] == 0).sum()
-print(f"  处理组 (DID=1): {treatment_count} 个城市")
-print(f"  对照组 (DID=0): {control_count} 个城市")
+# 检查处理组和对照组（基于treat变量）
+treatment_count = (df_base['treat'] == 1).sum()
+control_count = (df_base['treat'] == 0).sum()
+print(f"  处理组 (treat=1, 试点城市): {treatment_count} 个城市")
+print(f"  对照组 (treat=0, 非试点城市): {control_count} 个城市")
 
 # 步骤3: 准备控制变量
 print("\n步骤3: 准备控制变量...")
@@ -61,19 +67,19 @@ for var in control_vars:
     print(f"  {var}: {missing} 个缺失值")
 
 # 删除缺失值
-df_base_clean = df_base.dropna(subset=control_vars + ['DID', 'city_name'])
+df_base_clean = df_base.dropna(subset=control_vars + ['treat', 'city_name'])
 print(f"\n✓ 清理后基期数据: {len(df_base_clean)} 个观测")
 
 # 标准化控制变量
 scaler = StandardScaler()
 X = df_base_clean[control_vars].values
 X_scaled = scaler.fit_transform(X)
-y = df_base_clean['DID'].values
+y = df_base_clean['treat'].values
 
-print(f"\n处理组 (n={y.sum()}):")
-print(df_base_clean[df_base_clean['DID']==1][control_vars].describe())
-print(f"\n对照组 (n={len(y)-y.sum()}):")
-print(df_base_clean[df_base_clean['DID']==0][control_vars].describe())
+print(f"\n处理组 (treat=1, n={y.sum()}):")
+print(df_base_clean[df_base_clean['treat']==1][control_vars].describe())
+print(f"\n对照组 (treat=0, n={len(y)-y.sum()}):")
+print(df_base_clean[df_base_clean['treat']==0][control_vars].describe())
 
 # 步骤4: 计算倾向得分
 print("\n" + "="*70)
@@ -90,8 +96,8 @@ df_base_clean['propensity_score'] = propensity_scores
 print(f"✓ 倾向得分计算完成")
 print(f"\n倾向得分统计:")
 print(f"  全体: 均值={propensity_scores.mean():.4f}, 标准差={propensity_scores.std():.4f}")
-print(f"  处理组: 均值={propensity_scores[y==1].mean():.4f}, 标准差={propensity_scores[y==1].std():.4f}")
-print(f"  对照组: 均值={propensity_scores[y==0].mean():.4f}, 标准差={propensity_scores[y==0].std():.4f}")
+print(f"  处理组 (treat=1): 均值={propensity_scores[y==1].mean():.4f}, 标准差={propensity_scores[y==1].std():.4f}")
+print(f"  对照组 (treat=0): 均值={propensity_scores[y==0].mean():.4f}, 标准差={propensity_scores[y==0].std():.4f}")
 
 # 保存倾向得分数据
 df_base_clean.to_excel(f'{output_dir}/propensity_scores.xlsx', index=False)
@@ -104,12 +110,12 @@ print("="*70)
 
 caliper = 0.05
 
-treated = df_base_clean[df_base_clean['DID'] == 1].copy()
-control = df_base_clean[df_base_clean['DID'] == 0].copy()
+treated = df_base_clean[df_base_clean['treat'] == 1].copy()
+control = df_base_clean[df_base_clean['treat'] == 0].copy()
 
 print(f"\n匹配前:")
-print(f"  处理组: {len(treated)} 个")
-print(f"  对照组: {len(control)} 个")
+print(f"  处理组 (treat=1): {len(treated)} 个")
+print(f"  对照组 (treat=0): {len(control)} 个")
 
 # 为每个处理组观测找到对照组中的匹配
 matched_pairs = []
@@ -186,8 +192,8 @@ print("="*70)
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
 # 匹配前
-axes[0].hist(propensity_scores[y==0], bins=30, alpha=0.5, label='对照组', color='blue')
-axes[0].hist(propensity_scores[y==1], bins=30, alpha=0.5, label='处理组', color='red')
+axes[0].hist(propensity_scores[y==0], bins=30, alpha=0.5, label='对照组 (treat=0)', color='blue')
+axes[0].hist(propensity_scores[y==1], bins=30, alpha=0.5, label='处理组 (treat=1)', color='red')
 axes[0].set_xlabel('倾向得分')
 axes[0].set_ylabel('频数')
 axes[0].set_title(f'匹配前倾向得分分布 (基期{base_year}年)')
@@ -225,8 +231,8 @@ def calculate_stdized_diff(treated_vals, control_vals):
 print("\n匹配前标准化差异 (%):")
 before_std_diff = {}
 for var in control_vars:
-    treated_vals = df_base_clean[df_base_clean['DID']==1][var]
-    control_vals = df_base_clean[df_base_clean['DID']==0][var]
+    treated_vals = df_base_clean[df_base_clean['treat']==1][var]
+    control_vals = df_base_clean[df_base_clean['treat']==0][var]
     std_diff = calculate_stdized_diff(treated_vals, control_vals)
     before_std_diff[var] = std_diff
     print(f"  {var}: {std_diff:.2f}%")
@@ -273,8 +279,8 @@ comparison_df = pd.DataFrame({
     '变量': control_vars,
     '匹配前标准化差异(%)': [before_std_diff[v] for v in control_vars],
     '匹配后标准化差异(%)': [after_std_diff[v] for v in control_vars],
-    '处理组均值(匹配前)': [df_base_clean[df_base_clean['DID']==1][v].mean() for v in control_vars],
-    '对照组均值(匹配前)': [df_base_clean[df_base_clean['DID']==0][v].mean() for v in control_vars],
+    '处理组均值(匹配前)': [df_base_clean[df_base_clean['treat']==1][v].mean() for v in control_vars],
+    '对照组均值(匹配前)': [df_base_clean[df_base_clean['treat']==0][v].mean() for v in control_vars],
     '处理组均值(匹配后)': [df_base_clean[df_base_clean['city_name'].isin(matched_treated_cities)][v].mean() for v in control_vars],
     '对照组均值(匹配后)': [df_base_clean[df_base_clean['city_name'].isin(matched_control_cities)][v].mean() for v in control_vars],
 })
@@ -289,20 +295,35 @@ print("="*70)
 
 summary = f"""
 {'='*70}
-PSM倾向得分匹配分析报告
+PSM倾向得分匹配分析报告（修正版）
 {'='*70}
+
+重要说明：
+-----------
+本分析使用treat变量进行PSM匹配，匹配的是"身份"而非"状态"
+
+• treat: 静态分组变量（Who）
+  - treat=1: 在低碳试点名单中的城市（无论何时开始实施）
+  - treat=0: 从未在试点名单中的城市
+  - treat不随时间变化
+
+• DID: 动态处理变量（When）
+  - DID=1: 该年已实施政策（年份 >= 该城市生效年份）
+  - DID=0: 该年未实施政策
+  - DID随时间变化
 
 一、分析设定
 -----------
-• 基期年份: {base_year}年
+• 基期年份: {base_year}年（政策实施前）
+• 匹配变量: treat（静态分组变量）
 • 控制变量: {', '.join(control_vars)}
 • 卡尺设定: {caliper}
 • 匹配方法: 1:1最近邻匹配
 
 二、匹配结果
 -----------
-• 处理组数量: {len(treated)} 个城市
-• 对照组数量: {len(control)} 个城市
+• 处理组数量 (treat=1): {len(treated)} 个城市
+• 对照组数量 (treat=0): {len(control)} 个城市
 • 成功匹配: {len(matches_df)} 对
 • 匹配率: {len(matches_df)/len(treated)*100:.1f}%
 • 平均得分差: {matches_df['score_diff'].mean():.4f}
@@ -343,12 +364,25 @@ summary += f"""
 6. balance_check.xlsx - 平衡性检验详细表
 7. psm_summary.txt - 本摘要报告
 
-六、后续建议
+六、后续DID分析建议
 -----------
 使用匹配后数据集 (matched_dataset.xlsx) 进行DID分析：
-• DID变量: 使用 DID_matched 列
-• 处理组标识: 使用 matched_treatment 列
-• 样本期: 2007-2023年
+
+变量说明：
+• treat: 原始分组变量（是否在试点名单中）
+• matched_treatment: 匹配后处理组标识（1=匹配成功的试点城市）
+• DID: 原始DID变量（是否已实施政策）
+• DID_matched: 匹配后DID变量（仅对匹配成功的处理组有效）
+
+推荐模型：
+Y = β₀ + β₁×DID_matched + β₂×matched_treatment + γ×控制变量 + δ×年份固定效应 + θ×城市固定效应 + ε
+
+其中：
+• DID_matched: 核心解释变量（政策效应）
+• matched_treatment: 处理组固定效应
+• 控制变量：{', '.join(control_vars)}
+• 样本期：2007-2023年
+• 样本城市：{len(matched_treated_cities) + len(matched_control_cities)} 个（{len(matched_treated_cities)}对）
 
 {'='*70}
 """

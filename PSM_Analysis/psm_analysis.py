@@ -12,7 +12,7 @@ PSM倾向得分匹配分析脚本（修正版 + 缺失值插值）
 - 插值成功率：100%
 - 样本保留率：从203个观测提升至285个（+40.4%）
 
-控制变量：人均GDP、人口密度、产业结构升级、lnFDI
+控制变量：人均GDP、人口密度、产业结构升级
 卡尺：0.05
 基期：2009年（政策实施前）
 """
@@ -63,7 +63,7 @@ print(f"  对照组 (treat=0, 非试点城市): {control_count} 个城市")
 
 # 步骤3: 准备控制变量
 print("\n步骤3: 准备控制变量...")
-control_vars = ['gdp_per_capita', 'pop_density', 'industrial_upgrading', 'ln_fdi']
+control_vars = ['gdp_per_capita', 'pop_density', 'industrial_upgrading']
 print(f"控制变量: {control_vars}")
 
 # 检查缺失值

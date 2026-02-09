@@ -391,6 +391,142 @@ print("[OK] 已保存可视化图表: did_regression_visualization.png")
 event_df.to_excel('event_study_results.xlsx', index=False)
 print("[OK] 已保存事件研究数据: event_study_results.xlsx")
 
+# 11. 正确的事件研究（Event Study）- 使用回归方法
+print("\n步骤11: 事件研究分析（回归方法）...")
+print("模型: Y_it = α + Στ_k (Year_k × Treat_i) + γ·X_it + μ_i + λ_t + ε_it")
+print("基准期: 政策前一年 (2008年, t=-1)")
+
+try:
+    import statsmodels.formula.api as smf
+
+    # 创建相对年份变量
+    df_clean['relative_year'] = df_clean['year'] - 2009
+
+    # 为每个事件年份创建交互项（除了基准期2008年）
+    event_years_map = {
+        2007: -2,   # pre_2
+        2009: 0,    # post_0
+        2010: 1,    # post_1
+        2011: 2,    # post_2
+        2012: 3,    # post_3
+        2013: 4,    # post_4
+        2014: 5,    # post_5
+        2015: 6,    # post_6
+        2016: 7,    # post_7
+        2017: 8,    # post_8
+        2018: 9,    # post_9
+        2019: 10    # post_10
+    }
+
+    for year_val, rel_year in event_years_map.items():
+        col_name = f'post_{rel_year}' if rel_year >= 0 else f'pre_{abs(rel_year)}'
+        df_clean[col_name] = ((df_clean['year'] == year_val) & (df_clean['Treat'] == 1)).astype(int)
+
+    # 构建事件研究回归公式
+    interact_terms = [f'pre_2'] + [f'post_{i}' for i in range(0, 11)]
+    interact_terms_str = ' + '.join(interact_terms)
+    controls_str = ' + '.join(control_vars)
+
+    event_formula = f"{y_var} ~ {interact_terms_str} + {controls_str} + C(city_fe) + C(year_fe)"
+
+    print("\n正在运行事件研究回归（包含固定效应和聚类标准误）...")
+    event_model = smf.ols(event_formula, data=df_clean).fit(
+        cov_type='cluster', cov_kwds={'groups': df_clean['city_name']}
+    )
+
+    # 提取交互项结果
+    event_regression_results = []
+    for rel_year, term in [(event_years_map[y], y) for y in event_years_map.keys()]:
+        if term in event_model.params.index:
+            coef = event_model.params[term]
+            se = event_model.bse[term]
+            t_stat = event_model.tvalues[term]
+            p_val = event_model.pvalues[term]
+            ci_lower = coef - 1.96 * se
+            ci_upper = coef + 1.96 * se
+
+            event_regression_results.append({
+                'relative_year': rel_year,
+                'calendar_year': term,
+                'coefficient': coef,
+                'std_error': se,
+                't_statistic': t_stat,
+                'p_value': p_val,
+                'ci_lower': ci_lower,
+                'ci_upper': ci_upper,
+                'significant': '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else ''
+            })
+
+    event_reg_df = pd.DataFrame(event_regression_results)
+    event_reg_df = event_reg_df.sort_values('relative_year')
+
+    print("\n事件研究回归结果（动态处理效应）:")
+    print(event_reg_df.to_string(index=False))
+
+    # 绘制正确的事件研究图
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    ax.axvline(x=-1, color='red', linestyle='--', linewidth=2, label='政策实施 (2009)')
+    ax.axvline(x=0, color='red', linestyle=':', linewidth=1, alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5, label='基准线 (系数=0)')
+
+    x_coords = event_reg_df['relative_year'].values
+    y_coords = event_reg_df['coefficient'].values
+    y_errors_lower = y_coords - event_reg_df['ci_lower'].values
+    y_errors_upper = event_reg_df['ci_upper'].values - y_coords
+
+    ax.errorbar(x_coords, y_coords, yerr=[y_errors_lower, y_errors_upper],
+                fmt='o', capsize=5, capthick=2, linewidth=2,
+                color='steelblue', ecolor='steelblue', markersize=10,
+                markerfacecolor='white', markeredgewidth=2.5, zorder=5)
+
+    # 添加显著性标记
+    for _, row in event_reg_df.iterrows():
+        if row['significant']:
+            y_offset = 0.01 if row['coefficient'] >= 0 else -0.015
+            ax.text(row['relative_year'], row['coefficient'] + y_offset,
+                   row['significant'], ha='center', va='bottom',
+                   fontsize=14, fontweight='bold', color='red')
+
+    ax.set_xlabel('相对于政策实施的年份', fontsize=13)
+    ax.set_ylabel('动态处理效应系数（对数值）', fontsize=13)
+    ax.set_title('事件研究：平行趋势检验与动态处理效应\n（含控制变量、固定效应、聚类稳健标准误）', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11, loc='upper left')
+    ax.grid(True, alpha=0.3, axis='y', linestyle='--')
+
+    ax.set_xticks(range(-2, 11))
+    ax.set_xticklabels([f'{i}' if i != 0 else '0' for i in range(-2, 11)], fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig('event_study_regression.png', dpi=300, bbox_inches='tight')
+    print("\n[OK] 已保存事件研究图（回归方法）: event_study_regression.png")
+
+    event_reg_df.to_excel('event_study_regression_results.xlsx', index=False)
+    print("[OK] 已保存事件研究回归数据: event_study_regression_results.xlsx")
+
+    # 平行趋势检验
+    print("\n平行趋势检验:")
+    pre_trend = event_reg_df[event_reg_df['relative_year'] < 0]
+    if len(pre_trend) > 0:
+        pre_sig = pre_trend[pre_trend['p_value'] < 0.1]
+        if len(pre_sig) == 0:
+            print("  ✓ 政策前期系数均不显著 (p >= 0.10)")
+            print("  ✓ 平行趋势假设得到支持")
+        else:
+            print(f"  ⚠ 警告: {len(pre_sig)} 个政策前期系数显著:")
+            for _, row in pre_sig.iterrows():
+                print(f"    相对年份 {row['relative_year']}: 系数={row['coefficient']:.4f}, p={row['p_value']:.4f}")
+
+    print("\n输出文件（新增）:")
+    print("6. event_study_regression.png - 事件研究图（回归方法）")
+    print("7. event_study_regression_results.xlsx - 事件研究回归数据")
+
+except ImportError:
+    print("\n注意: 需要安装statsmodels才能运行事件研究回归")
+    print("      命令: pip install statsmodels")
+except Exception as e:
+    print(f"\n事件研究回归出错: {str(e)}")
+
 print("\n" + "=" * 80)
 print("DID回归分析完成！")
 print("=" * 80)

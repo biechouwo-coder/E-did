@@ -325,57 +325,127 @@ plt.tight_layout()
 plt.savefig('did_regression_visualization.png', dpi=300, bbox_inches='tight')
 print("[OK] 已保存可视化图表: did_regression_visualization.png")
 
-# 11. 事件研究（Event Study）
-print("\n步骤11: 事件研究分析...")
+# 11. 事件研究（Event Study）- 正确的回归方法
+print("\n步骤11: 事件研究分析（回归方法）...")
+print("模型: Y_it = α + Στ_k (Year_k × Treat_i) + γ·X_it + μ_i + λ_t + ε_it")
+print("基准期: 政策前一年 (2008年, t=-1)")
 
-# 计算相对于政策实施的年份
-event_study_results = []
+# 创建相对年份变量（相对于2009年政策实施）
+df_clean['relative_year'] = df_clean['year'] - 2009
 
-# 以2009年为基准年
-base_year = 2009
+# 创建年份虚拟变量（除了基准期2008年，即relative_year=-1）
+# 我们将创建2007、2009、2010...2019年的交互项
+event_years = {
+    2007: -2,
+    2009: 0,
+    2010: 1,
+    2011: 2,
+    2012: 3,
+    2013: 4,
+    2014: 5,
+    2015: 6,
+    2016: 7,
+    2017: 8,
+    2018: 9,
+    2019: 10
+}
 
-for lead in range(-2, 12):  # 政策前2年到政策后11年
-    year = base_year + lead
-    if year < 2007 or year > 2019:
-        continue
+# 为每个事件年份创建交互项
+for year_val, rel_year in event_years.items():
+    col_name = f'post_{rel_year}' if rel_year >= 0 else f'pre_{abs(rel_year)}'
+    df_clean[col_name] = ((df_clean['year'] == year_val) & (df_clean['Treat'] == 1)).astype(int)
 
-    # 筛选该年的数据
-    year_data = df[df['year'] == year]
+# 构建事件研究回归公式
+# 交互项列表（按相对年份排序）
+interact_terms = [f'pre_2'] + [f'post_{i}' for i in range(0, 11)]
+interact_terms_str = ' + '.join(interact_terms)
+controls_str = ' + '.join(control_vars)
 
-    if len(year_data) == 0:
-        continue
+# 事件研究回归方程
+# 基准期是2008年（relative_year=-1），所以不包含在回归中
+event_formula = f"{y_var} ~ {interact_terms_str} + {controls_str} + C(city_fe) + C(year_fe)"
 
-    # 计算该年的处理组-对照组差值
-    treat_mean = year_data[year_data['Treat'] == 1][y_var].mean()
-    control_mean = year_data[year_data['Treat'] == 0][y_var].mean()
-    diff = treat_mean - control_mean
+print(f"\n事件研究回归公式:")
+print(f"  因变量: {y_var}")
+print(f"  交互项: {interact_terms_str}")
+print(f"  控制变量: {controls_str}")
+print(f"  固定效应: 城市 + 年份")
+print(f"  标准误: 聚类到城市层面")
 
-    event_study_results.append({
-        'relative_year': lead,
-        'calendar_year': year,
-        'treatment_effect': diff
-    })
+# 运行事件研究回归
+print("\n正在运行事件研究回归...")
+event_model = smf.ols(event_formula, data=df_clean).fit(
+    cov_type='cluster', cov_kwds={'groups': df_clean['city_name']}
+)
 
-event_df = pd.DataFrame(event_study_results)
+# 提取交互项系数和标准误
+event_results = []
+for rel_year, term in [(event_years[y], y) for y in event_years.keys()]:
+    if term in event_model.params.index:
+        coef = event_model.params[term]
+        se = event_model.bse[term]
+        t_stat = event_model.tvalues[term]
+        p_val = event_model.pvalues[term]
+        ci_lower = coef - 1.96 * se
+        ci_upper = coef + 1.96 * se
 
-# 绘制事件研究图
+        event_results.append({
+            'relative_year': rel_year,
+            'calendar_year': term,
+            'coefficient': coef,
+            'std_error': se,
+            't_statistic': t_stat,
+            'p_value': p_val,
+            'ci_lower': ci_lower,
+            'ci_upper': ci_upper,
+            'significant': '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else ''
+        })
+
+event_df = pd.DataFrame(event_results)
+event_df = event_df.sort_values('relative_year')
+
+print("\n事件研究回归结果（动态处理效应）:")
+print(event_df.to_string(index=False))
+
+# 绘制事件研究图（使用回归系数和置信区间）
 if len(event_df) > 0:
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    # 绘制系数
-    ax.axvline(x=-1, color='red', linestyle='--', linewidth=2, label='政策实施')
-    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    # 绘制基准线（政策实施前一年，相对年份=-1，系数=0）
+    ax.axvline(x=-1, color='red', linestyle='--', linewidth=2, label='政策实施 (2009)')
+    ax.axvline(x=0, color='red', linestyle=':', linewidth=1, alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1, label='基准线 (系数=0)')
 
-    # 绘制各期效应
-    colors = ['gray' if x < -1 else 'green' for x in event_df['relative_year']]
-    ax.bar(event_df['relative_year'], event_df['treatment_effect'],
-           color=colors, alpha=0.7, edgecolor='black')
+    # 绘制各期系数及95%置信区间
+    x_coords = event_df['relative_year'].values
+    y_coords = event_df['coefficient'].values
+    y_errors = [event_df['coefficient'] - event_df['ci_lower'],
+                event_df['ci_upper'] - event_df['coefficient']]
 
-    ax.set_xlabel('相对于政策实施的年份')
-    ax.set_ylabel('处理组-对照组差值（对数值）')
-    ax.set_title('事件研究：动态处理效应')
-    ax.legend()
+    # 使用带误差线的散点图
+    colors = ['gray' if x < 0 else 'darkgreen' for x in x_coords]
+    ax.errorbar(x_coords, y_coords, yerr=y_errors,
+                fmt='o', capsize=5, capthick=2, linewidth=2,
+                color='steelblue', ecolor='steelblue', markersize=8,
+                markerfacecolor='white', markeredgewidth=2)
+
+    # 添加显著性标记
+    for _, row in event_df.iterrows():
+        if row['significant']:
+            y_offset = 0.01 if row['coefficient'] >= 0 else -0.015
+            ax.text(row['relative_year'], row['coefficient'] + y_offset,
+                   row['significant'], ha='center', va='bottom',
+                   fontsize=12, fontweight='bold', color='red')
+
+    ax.set_xlabel('相对于政策实施的年份', fontsize=12)
+    ax.set_ylabel('动态处理效应系数（对数值）', fontsize=12)
+    ax.set_title('事件研究：平行趋势检验与动态处理效应\n（包含控制变量和固定效应）', fontsize=13)
+    ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3, axis='y')
+
+    # 添加x轴刻度
+    ax.set_xticks(range(-2, 11))
+    ax.set_xticklabels([f'{i}' if i != 0 else '0' for i in range(-2, 11)])
 
     plt.tight_layout()
     plt.savefig('event_study.png', dpi=300, bbox_inches='tight')
@@ -384,6 +454,21 @@ if len(event_df) > 0:
     # 保存事件研究数据
     event_df.to_excel('event_study_results.xlsx', index=False)
     print("[OK] 已保存事件研究数据: event_study_results.xlsx")
+
+    # 平行趋势检验
+    print("\n平行趋势检验:")
+    pre_trend = event_df[event_df['relative_year'] < 0]
+    if len(pre_trend) > 0:
+        # 检查政策前期系数是否不显著（接近0）
+        pre_sig = pre_trend[pre_trend['p_value'] < 0.1]
+        if len(pre_sig) == 0:
+            print("  ✓ 政策前期所有系数均不显著 (p >= 0.10)")
+            print("  ✓ 平行趋势假设得到支持")
+        else:
+            print(f"  ⚠ 警告: {len(pre_sig)} 个政策前期系数显著")
+            for _, row in pre_sig.iterrows():
+                print(f"    相对年份 {row['relative_year']}: 系数={row['coefficient']:.4f}, p={row['p_value']:.4f}")
+            print("  ⚠ 平行趋势假设可能不成立")
 
 print("\n" + "=" * 80)
 print("DID回归分析完成！")

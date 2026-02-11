@@ -1,9 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git clone:*)",
+      "Bash(where:*)",
+      "Bash(py:*)",
+      "Bash(git init:*)",
+      "Bash(git remote add origin:*)",
+      "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(py:*)"
+      "Bash(git push:*)",
+      "Bash(dir:*)",
+      "Bash(ls:*)"
     ]
   }
 }

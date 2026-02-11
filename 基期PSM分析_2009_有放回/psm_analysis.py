@@ -1,14 +1,13 @@
 """
 基期PSM分析 (2009年)
 使用变量: ln_real_gdp, ln_人口密度, ln_金融发展水平, 第二产业占GDP比重
-匹配方法: 1:1 无放回匹配
+匹配方法: 1:1 有放回匹配
 卡尺: 倾向得分对数几率标准差的0.25倍
 """
 
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from scipy import stats
@@ -135,13 +134,13 @@ class PSMAnalyzer:
 
         return self.propensity_scores
 
-    def perform_matching(self, ratio=1, replacement=False):
+    def perform_matching(self, ratio=1, replacement=True):
         """
         执行倾向得分匹配
 
         参数:
         - ratio: 匹配比例，默认1:1
-        - replacement: 是否有放回，默认False
+        - replacement: 是否有放回，默认True
         """
         print(f"执行匹配: {ratio}:1, {'有' if replacement else '无'}放回")
         print(f"卡尺: {self.caliper:.4f}")
@@ -155,7 +154,7 @@ class PSMAnalyzer:
 
         matched_treated = []
         matched_control = []
-        used_control_indices = []
+        control_usage_count = {}  # 记录控制组被使用的次数（用于统计）
 
         # 对每个处理组观测寻找匹配
         for i, treated_row in treated.iterrows():
@@ -163,10 +162,6 @@ class PSMAnalyzer:
 
             # 计算与所有控制组的距离
             distances = np.abs(control['propensity_score'].values - treated_ps)
-
-            # 如果是无放回，排除已使用的控制组
-            if not replacement and used_control_indices:
-                distances[used_control_indices] = np.inf
 
             # 找到最近的匹配
             best_idx = np.argmin(distances)
@@ -177,12 +172,12 @@ class PSMAnalyzer:
                 matched_control.append(control.iloc[best_idx].copy())
                 matched_treated.append(treated_row.copy())
 
-                if not replacement:
-                    used_control_indices.append(best_idx)
+                # 记录控制组使用次数
+                control_name = control.iloc[best_idx]['city_name']
+                control_usage_count[control_name] = control_usage_count.get(control_name, 0) + 1
             else:
-                # 没有找到符合条件的匹配，仍然记录但不标记匹配成功
+                # 没有找到符合条件的匹配
                 matched_treated.append(treated_row.copy())
-                # 创建一个空的控制组记录
                 empty_row = pd.Series({'propensity_score': np.nan})
                 for col in self.covariates:
                     empty_row[col] = np.nan
@@ -196,17 +191,26 @@ class PSMAnalyzer:
         n_matched = (matched_control_df['city_name'] != '未匹配').sum()
         match_rate = n_matched / len(treated) * 100
 
+        # 统计控制组被使用情况
+        n_unique_controls = len(control_usage_count)
+        max_usage = max(control_usage_count.values()) if control_usage_count else 0
+        avg_usage = np.mean(list(control_usage_count.values())) if control_usage_count else 0
+
         print(f"\n匹配结果:")
         print(f"  - 处理组总数: {len(treated)}")
         print(f"  - 成功匹配: {n_matched}")
         print(f"  - 匹配成功率: {match_rate:.2f}%")
+        print(f"  - 使用的控制组城市数: {n_unique_controls}")
+        print(f"  - 控制组平均使用次数: {avg_usage:.2f}")
+        print(f"  - 控制组最大使用次数: {max_usage}")
         print()
 
         self.matched_data = {
             'treated': matched_treated_df,
             'control': matched_control_df,
             'match_rate': match_rate,
-            'n_matched': n_matched
+            'n_matched': n_matched,
+            'control_usage': control_usage_count
         }
 
         return self.matched_data
@@ -395,6 +399,18 @@ class PSMAnalyzer:
 
         return matched_cities
 
+    def export_control_usage(self, save_path='控制组使用情况.xlsx'):
+        """导出控制组城市使用情况（仅用于有放回匹配）"""
+        usage_df = pd.DataFrame([
+            {'城市': city, '使用次数': count}
+            for city, count in sorted(self.matched_data['control_usage'].items(),
+                                      key=lambda x: x[1], reverse=True)
+        ])
+        usage_df.to_excel(save_path, index=False, engine='openpyxl')
+        print(f"控制组使用情况已保存至: {save_path}")
+
+        return usage_df
+
     def generate_report(self, output_path='PSM分析报告_2009.txt'):
         """生成PSM分析报告"""
         report = f"""
@@ -407,7 +423,7 @@ class PSMAnalyzer:
 基期年份: {self.baseline_year}
 协变量: {', '.join(self.covariates)}
 匹配比例: 1:1
-是否放回: 无放回
+是否放回: 有放回
 卡尺设置: 倾向得分对数几率标准差的{self.caliper_mult}倍
 实际卡尺值: {self.caliper:.4f}
 
@@ -425,7 +441,28 @@ class PSMAnalyzer:
 倾向得分最小值: {self.propensity_scores.min():.4f}
 倾向得分最大值: {self.propensity_scores.max():.4f}
 
-四、匹配建议
+四、控制组使用情况（有放回匹配）
+{'-'*80}
+"""
+
+        # 添加控制组使用统计
+        if 'control_usage' in self.matched_data and self.matched_data['control_usage']:
+            usage_counts = list(self.matched_data['control_usage'].values())
+            report += f"""
+使用的控制组城市数量: {len(self.matched_data['control_usage'])}
+控制组平均使用次数: {np.mean(usage_counts):.2f}
+控制组最大使用次数: {max(usage_counts)}
+控制组最小使用次数: {min(usage_counts)}
+
+使用次数最多的前5个控制组城市:
+"""
+            sorted_usage = sorted(self.matched_data['control_usage'].items(),
+                                 key=lambda x: x[1], reverse=True)[:5]
+            for i, (city, count) in enumerate(sorted_usage, 1):
+                report += f"  {i}. {city}: {count}次\n"
+
+        report += f"""
+五、平衡性检验
 {'-'*80}
 """
         # 读取平衡性检验结果
@@ -448,7 +485,7 @@ class PSMAnalyzer:
 改进建议:
 1. 考虑增加协变量以提高匹配质量
 2. 调整卡尺大小(当前为0.25倍标准差)
-3. 尝试有放回匹配或不同的匹配比例
+3. 尝试不同的匹配比例
 4. 检查是否有足够的共同支撑域
 """
 
@@ -479,7 +516,7 @@ def main():
 
     # 创建分析器
     print("="*80)
-    print("基期PSM分析 (2009年)")
+    print("基期PSM分析 (2009年) - 有放回匹配")
     print("="*80)
     print()
 
@@ -493,8 +530,8 @@ def main():
     # 计算倾向得分
     analyzer.calculate_propensity_scores()
 
-    # 执行匹配
-    analyzer.perform_matching(ratio=1, replacement=False)
+    # 执行匹配（有放回）
+    analyzer.perform_matching(ratio=1, replacement=True)
 
     # 平衡性检验
     if analyzer.matched_data['n_matched'] > 0:
@@ -502,6 +539,9 @@ def main():
 
         # 导出匹配后的城市列表
         analyzer.export_matched_cities()
+
+        # 导出控制组使用情况（仅用于有放回匹配）
+        analyzer.export_control_usage()
     else:
         print("警告: 没有成功匹配的样本，无法进行平衡性检验")
 

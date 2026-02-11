@@ -156,12 +156,18 @@ class PSMAnalyzer:
         matched_control = []
         control_usage_count = {}  # 记录控制组被使用的次数（用于统计）
 
+        # 预先计算所有控制组的Logit值
+        control_logit_ps = np.log(control['propensity_score'].values /
+                                  (1 - control['propensity_score'].values))
+
         # 对每个处理组观测寻找匹配
         for i, treated_row in treated.iterrows():
             treated_ps = treated_row['propensity_score']
+            # 将处理组的倾向得分转换为Logit值
+            treated_logit_ps = np.log(treated_ps / (1 - treated_ps))
 
-            # 计算与所有控制组的距离
-            distances = np.abs(control['propensity_score'].values - treated_ps)
+            # 在Logit尺度上计算距离
+            distances = np.abs(control_logit_ps - treated_logit_ps)
 
             # 找到最近的匹配
             best_idx = np.argmin(distances)

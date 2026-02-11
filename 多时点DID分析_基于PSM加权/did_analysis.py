@@ -251,8 +251,16 @@ class DIDAnalyzer:
         y = reg_df['ln_emission_winsor']
         X = reg_df[['DID', 'ln_real_gdp', 'ln_人口密度', 'ln_金融发展水平', '第二产业占GDP比重']]
 
-        # 拟合模型
-        model = PanelOLS(y, X, entity_effects=True, time_effects=True)
+        # 检查是否有权重列
+        if 'weight' in reg_df.columns:
+            weights = reg_df['weight']
+            print(f"使用PSM权重: {weights.sum():.0f} (总权重)")
+            # 拟合模型（带权重）
+            model = PanelOLS(y, X, entity_effects=True, time_effects=True, weights=weights)
+        else:
+            print("警告: 未找到权重列，使用无权重回归")
+            # 拟合模型（无权重）
+            model = PanelOLS(y, X, entity_effects=True, time_effects=True)
 
         # 使用聚类稳健标准误（聚类到城市层面）
         result = model.fit(cov_type='clustered', cluster_entity=True)
@@ -271,6 +279,7 @@ class DIDAnalyzer:
     def _run_statsmodels(self, reg_df):
         """使用statsmodels进行OLS回归（LSDV法，不支持聚类标准误）"""
         import statsmodels.formula.api as smf
+        import statsmodels.api as sm
 
         # 创建城市和年份虚拟变量
         reg_df_copy = reg_df.copy()
@@ -281,7 +290,19 @@ class DIDAnalyzer:
         formula = ('ln_emission_winsor ~ DID + ln_real_gdp + ln_人口密度 + ln_金融发展水平 + ' +
                   'Q("第二产业占GDP比重") + C(city_name) + C(year)')
 
-        result = smf.ols(formula, data=reg_df_copy).fit()
+        # 检查是否有权重列
+        if 'weight' in reg_df_copy.columns:
+            print(f"使用PSM权重: {reg_df_copy['weight'].sum():.0f} (总权重)")
+            # 使用WLS（加权最小二乘法）
+            model = smf.ols(formula, data=reg_df_copy)
+            result = model.fit_regularized(alpha=0, L1_wt=reg_df_copy['weight'].values)
+            # 实际上statsmodels的ols不支持直接权重，需要使用WLS
+            # 改用sm.WLS
+            y, X = smf.patsy.dmatrices(formula, reg_df_copy, return_type='dataframe')
+            result = sm.WLS(y, X, weights=reg_df_copy['weight'].values).fit()
+        else:
+            print("警告: 未找到权重列，使用无权重OLS回归")
+            result = smf.ols(formula, data=reg_df_copy).fit()
 
         # 打印结果
         print("\n" + "-"*80)
@@ -396,7 +417,7 @@ class DIDAnalyzer:
         print(f"\n模型拟合:")
         print(f"  - R-squared: {r2:.6f}")
 
-        print("\n注意: 当前使用sklearn简化版本，未包含聚类标准误")
+        print("\n注意: 当前使用sklearn简化版本，未使用PSM权重，也未包含聚类标准误")
         print("      如需更准确的推断，建议安装linearmodels:")
         print("      pip install linearmodels")
 
@@ -612,7 +633,7 @@ DID交互项效应:
 DID系数 = {coef:.6f}
 
 这意味着：在控制其他因素后，政策实施使处理组城市的ln(碳排放强度)比
-控制组城市{('显著' if self.did_results['p_value'] < 0.05 else '')}低了{abs(coef):.6f}个单位。
+控制组城市{('显著' if self.did_results['p_value'] < 0.05 else '')}{'低了' if coef < 0 else '高了'}{abs(coef):.6f}个单位。
 
 换算成百分比：{'降低了约 {:.2f}%'.format(abs(pct_change)) if coef < 0 else '提高了约 {:.2f}%'.format(pct_change)}
 

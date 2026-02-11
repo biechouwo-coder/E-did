@@ -1,0 +1,11 @@
+pandas
+numpy
+scipy
+matplotlib
+openpyxl
+xlrd
+
+# 可选：linearmodels用于更强大的面板回归（支持聚类标准误）
+# 如果不安装，将使用statsmodels作为备选方案
+linearmodels
+statsmodels

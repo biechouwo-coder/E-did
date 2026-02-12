@@ -209,7 +209,8 @@ class DIDAnalyzer:
 
         # 删除包含缺失值的行
         n_before = len(self.df)
-        reg_df = self.df[required_cols + ['city_name', 'year']].dropna()
+        # 包含weight列用于PSM加权
+        reg_df = self.df[required_cols + ['city_name', 'year', 'weight']].dropna()
         n_after = len(reg_df)
 
         if n_before != n_after:

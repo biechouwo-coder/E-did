@@ -153,36 +153,39 @@ print(f"对照组倾向得分均值: {df_clean[df_clean[treatment_col]==0]['prop
 
 # 7. 计算卡尺（倾向得分对数几率的标准差的0.25倍）
 print("\n[步骤7] 计算卡尺...")
-# 计算对数几率
+# 计算对数几率 (logit = ln(p/(1-p)))
 logit_score = np.log(df_clean['propensity_score'] / (1 - df_clean['propensity_score']))
-# 计算标准差
-caliper = 0.25 * logit_score.std()
-caliper_original = 0.25 * df_clean['propensity_score'].std()
-print(f"卡尺（对数几率标准差的0.25倍）: {caliper:.6f}")
-print(f"卡尺（倾向得分原始尺度）: {caliper_original:.6f}")
+# 将logit得分添加到数据框中
+df_clean['logit_score'] = logit_score
+
+# 计算卡尺（学术界标准：基于Logit标准差的0.25倍）
+caliper_logit = 0.25 * logit_score.std()
+print(f"卡尺（对数几率标准差的0.25倍）: {caliper_logit:.6f}")
+print(f"注意：匹配将在Logit尺度上进行，这是学术界推荐的做法")
+print(f"      因为原始概率在接近0或1时会被压缩，导致距离失真")
 
 # 8. 执行匹配（1:1有放回）
-print("\n[步骤8] 执行1:1有放回匹配...")
-treated = df_clean[df_clean[treatment_col] == 1]
-control = df_clean[df_clean[treatment_col] == 0]
+print("\n[步骤8] 执行1:1有放回匹配（在Logit尺度上）...")
+treated = df_clean[df_clean[treatment_col] == 1].copy()
+control = df_clean[df_clean[treatment_col] == 0].copy()
 
-# 使用倾向得分进行匹配
-treated_scores = treated['propensity_score'].values.reshape(-1, 1)
-control_scores = control['propensity_score'].values.reshape(-1, 1)
+# 【重要修正】使用Logit尺度进行匹配（而非原始概率）
+treated_logit_scores = treated['logit_score'].values.reshape(-1, 1)
+control_logit_scores = control['logit_score'].values.reshape(-1, 1)
 
 # 创建NN模型（k=1表示1:1匹配）
 nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree')
-nbrs.fit(control_scores)
+nbrs.fit(control_logit_scores)
 
-# 找到最近邻
-distances, indices = nbrs.kneighbors(treated_scores)
+# 找到最近邻（在Logit尺度上的距离）
+distances_logit, indices = nbrs.kneighbors(treated_logit_scores)
 
-# 应用卡尺限制
+# 应用卡尺限制（使用基于Logit标准差的卡尺）
 matched_control_indices = []
 matched_treated_indices = []
 
-for i, (dist, idx) in enumerate(zip(distances, indices)):
-    if dist[0] <= caliper_original:
+for i, (dist, idx) in enumerate(zip(distances_logit, indices)):
+    if dist[0] <= caliper_logit:  # ← 使用正确的Logit卡尺
         matched_treated_indices.append(i)
         matched_control_indices.append(idx[0])
 
@@ -270,8 +273,8 @@ summary = pd.DataFrame({
         '2009',
         len(required_vars),
         ', '.join(required_vars),
-        '1:1有放回匹配',
-        f'{caliper_original:.6f}',
+        '1:1有放回匹配（Logit尺度）',
+        f'{caliper_logit:.6f}',
         len(treat_group),
         len(control_group),
         len(matched_treated),
@@ -382,8 +385,8 @@ PSM倾向得分匹配分析报告（四个匹配变量）
 ------------
 基期年份：2009年
 匹配变量：{', '.join(required_vars)}
-匹配方法：1:1有放回匹配
-卡尺：倾向得分标准差的0.25倍（{caliper_original:.6f}）
+匹配方法：1:1有放回匹配（在Logit尺度上进行）
+卡尺：0.25 × Logit标准差（{caliper_logit:.6f}）
 
 二、样本情况
 ------------

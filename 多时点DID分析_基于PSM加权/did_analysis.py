@@ -188,6 +188,107 @@ class DIDAnalyzer:
         print(f"\n分布对比图已保存: ln_emission分布对比.png")
         plt.close()
 
+    def parallel_trends_test(self, pre_period_end=2009):
+        """
+        平行趋势检验（Parallel Trends Test）
+
+        检验在政策实施前，处理组和控制组的结果变量是否具有相似的线性趋势
+
+        参数:
+        - pre_period_end: 政策实施前的截止年份（默认2009）
+        """
+        print("\n" + "="*80)
+        print("平行趋势检验")
+        print("="*80)
+
+        # 筛选政策前的数据
+        pre_data = self.df[self.df['year'] <= pre_period_end].copy()
+
+        if len(pre_data) == 0:
+            print(f"错误: 没有{pre_period_end}年及以前的数据")
+            return False
+
+        print(f"\n使用{pre_period_end}年及以前的数据进行检验")
+        print(f"  - 观测数: {len(pre_data)}")
+        print(f"  - 处理组城市数: {pre_data[pre_data['Treat']==1]['city_name'].nunique()}")
+        print(f"  - 控制组城市数: {pre_data[pre_data['Treat']==0]['city_name'].nunique()}")
+
+        # 按组别和年份计算平均ln_emission
+        group_year_stats = pre_data.groupby(['Treat', 'year'])['ln_emission_winsor'].mean().reset_index()
+        group_year_stats.columns = ['Treat', 'year', 'mean_ln_emission']
+
+        # 绘制趋势图
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        treated_data = group_year_stats[group_year_stats['Treat'] == 1]
+        control_data = group_year_stats[group_year_stats['Treat'] == 0]
+
+        ax.plot(treated_data['year'], treated_data['mean_ln_emission'],
+                marker='o', linestyle='-', linewidth=2, label='处理组', color='coral')
+        ax.plot(control_data['year'], control_data['mean_ln_emission'],
+                marker='s', linestyle='--', linewidth=2, label='控制组', color='steelblue')
+
+        # 标记政策实施年份
+        ax.axvline(x=pre_period_end, color='red', linestyle=':', linewidth=2, label=f'政策实施({pre_period_end}年)')
+        ax.set_xlabel('年份', fontsize=12)
+        ax.set_ylabel('ln(碳排放强度) [缩尾后]', fontsize=12)
+        ax.set_title('平行趋势检验：政策前处理组与控制组趋势对比', fontsize=14)
+        ax.legend(fontsize=11)
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig('平行趋势检验.png', dpi=300, bbox_inches='tight')
+        print(f"\n趋势图已保存: 平行趋势检验.png")
+        plt.close()
+
+        # 统计检验：回归交互项
+        # 模型: ln_emission = α + β1*Treat + β2*year + β3*(Treat×year) + ε
+        # 如果β3显著，说明平行趋势不成立
+        import statsmodels.formula.api as smf
+
+        pre_data_copy = pre_data.copy()
+        pre_data_copy['Treat'] = pre_data_copy['Treat'].astype(int)
+        pre_data_copy['year_centered'] = pre_data_copy['year'] - pre_data_copy['year'].min()
+
+        formula = 'ln_emission_winsor ~ Treat * year_centered'
+        model = smf.ols(formula, data=pre_data_copy).fit()
+
+        # 提取交互项系数和p值
+        interaction_coef = model.params['Treat:year_centered']
+        interaction_pval = model.pvalues['Treat:year_centered']
+
+        print("\n统计检验结果:")
+        print(f"  - 模型: ln_emission ~ Treat + year + Treat×year")
+        print(f"  - 交互项系数(Treat×year): {interaction_coef:.6f}")
+        print(f"  - 交互项p值: {interaction_pval:.6f}")
+        print(f"  - 平行趋势假设: {'通过 (p>=0.05)' if interaction_pval >= 0.05 else '拒绝 (p<0.05)'}")
+
+        # 年别增长率对比
+        if len(treated_data) > 1 and len(control_data) > 1:
+            # 计算复合年增长率
+            treated_growth = (treated_data['mean_ln_emission'].iloc[-1] /
+                            treated_data['mean_ln_emission'].iloc[0]) ** (1/len(treated_data)) - 1
+            control_growth = (control_data['mean_ln_emission'].iloc[-1] /
+                            control_data['mean_ln_emission'].iloc[0]) ** (1/len(control_data)) - 1
+
+            print(f"\n年复合增长率对比:")
+            print(f"  - 处理组: {treated_growth*100:.2f}%")
+            print(f"  - 控制组: {control_growth*100:.2f}%")
+            print(f"  - 差异: {abs(treated_growth - control_growth)*100:.2f}个百分点")
+
+        print("\n结论:")
+        if interaction_pval < 0.05:
+            print("  ⚠️ 警告: 交互项显著，处理组和控制组在政策前的趋势存在显著差异")
+            print("  这可能违反平行趋势假设，建议谨慎解释DID结果")
+        else:
+            print("  通过: 平行趋势假设成立，处理组和控制组在政策前具有相似的发展趋势")
+
+        return {
+            'interaction_coef': interaction_coef,
+            'interaction_pval': interaction_pval,
+            'parallel_trend_holds': interaction_pval >= 0.05
+        }
+
     def run_did_regression(self):
         """
         运行多时点DID回归
@@ -581,8 +682,29 @@ PSM匹配结果: {self.psm_matched_path.split('/')[-1]}
   固定效应: 城市、年份
   标准误: 聚类到城市层面
 
-二、数据筛选
+"""
+
+        # 添加平行趋势检验结果
+        if hasattr(self, 'parallel_test_result'):
+            prt = self.parallel_test_result
+            report += f"""
+二、平行趋势检验
 {'-'*80}
+检验方法: 事件研究法(Event Study)
+检验时期: 2009年及以前
+
+统计检验结果:
+  - 交互项系数(Treat×Year): {prt['interaction_coef']:.6f}
+  - 交互项p值: {prt['interaction_pval']:.6f}
+  - 平行趋势假设: {'通过 (p>=0.05)' if prt['parallel_trend_holds'] else '拒绝 (p<0.05)'}
+
+"""
+            if not prt['parallel_trend_holds']:
+                report += """
+警告: 处理组和控制组在政策前的趋势存在显著差异，这可能违反DID的平行趋势假设。
+建议:
+  1. 谨慎解释DID结果的因果效应
+  2. 考虑使用其他方法（如合成控制法）进行稳健性检验
 """
 
         # 添加城市权重信息
@@ -675,6 +797,10 @@ def main():
 
     # 对因变量进行对数变换和缩尾处理
     analyzer.winsorize_emission(limits=(0.01, 0.01))
+
+    # 平行趋势检验（在DID回归之前）
+    parallel_result = analyzer.parallel_trends_test(pre_period_end=2009)
+    analyzer.parallel_test_result = parallel_result  # 保存结果用于报告
 
     # 运行DID回归
     if analyzer.run_did_regression():

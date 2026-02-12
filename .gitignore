@@ -1,9 +1,3 @@
-# 数据文件
-*.xlsx
-*.xls
-*.csv
-*.dta
-
 # Python
 __pycache__/
 *.py[cod]
@@ -26,11 +20,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# R
-*.Rproj.user
-*.Rhistory
-*.RData
-*.Ruserdata
+# Virtual environments
+venv/
+ENV/
+env/
 
 # IDE
 .vscode/
@@ -42,3 +35,15 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Data files (optional - uncomment if you want to ignore data files)
+# *.xlsx
+# *.csv
+# *.xls
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+nul

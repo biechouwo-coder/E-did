@@ -65,8 +65,8 @@ print(f"使用处理组变量: {treatment_col}")
 print(f"处理组样本数: {df_base[treatment_col].sum()}")
 print(f"对照组样本数: {(df_base[treatment_col]==0).sum()}")
 
-# 删除含有缺失值的样本
-df_clean = df_base[required_vars + [treatment_col]].dropna()
+# 删除含有缺失值的样本（保留city_name用于后续分析）
+df_clean = df_base[required_vars + [treatment_col, 'city_name', 'year']].dropna()
 print(f"\n删除缺失值后样本数: {len(df_clean)}")
 print(f"处理组样本数: {df_clean[treatment_col].sum()}")
 print(f"对照组样本数: {(df_clean[treatment_col]==0).sum()}")

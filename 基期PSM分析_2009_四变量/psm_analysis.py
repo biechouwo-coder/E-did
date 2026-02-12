@@ -126,7 +126,8 @@ class PSMAnalyzer:
         X_scaled = scaler.fit_transform(X)
 
         # 计算倾向得分（使用Logistic回归）
-        logit = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
+        # 注意：不使用class_weight='balanced'，以获得真实的倾向得分
+        logit = LogisticRegression(max_iter=1000, random_state=42)
         logit.fit(X_scaled, y)
 
         # 获取倾向得分
